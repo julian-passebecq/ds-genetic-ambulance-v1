@@ -10,6 +10,8 @@ def json_serial(obj):
     """JSON serializer for objects not serializable by default json code"""
     if isinstance(obj, (datetime, pd.Timestamp)):
         return obj.isoformat()
+    if isinstance(obj, gpd.GeoSeries):
+        return obj.to_json()
     raise TypeError(f"Type {type(obj)} not serializable")
 
 st.set_page_config(page_title="Geneva Ambulance Locations and Population Density")
@@ -50,7 +52,7 @@ try:
     m = folium.Map(location=[46.2044, 6.1432], zoom_start=11)
 
     st.write("Converting GeoDataFrame to JSON...")
-    geo_json = json.loads(gdf.to_json(), parse_constant=json_serial)
+    geo_json = json.loads(gdf.to_json(default=json_serial))
     
     st.write("Adding choropleth layer...")
     folium.Choropleth(
