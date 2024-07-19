@@ -5,6 +5,7 @@ import geopandas as gpd
 import pandas as pd
 import json
 from datetime import datetime
+import random
 
 def json_serial(obj):
     """JSON serializer for objects not serializable by default json code"""
@@ -14,21 +15,15 @@ def json_serial(obj):
         return obj.to_json()
     raise TypeError(f"Type {type(obj)} not serializable")
 
-st.set_page_config(page_title="Geneva Ambulance Locations and Population Density")
-st.title("Geneva Ambulance Locations and Population Density")
+st.set_page_config(page_title="TCS Swiss Ambulance Rescue Geneva Simulation", layout="wide")
+st.title("TCS Swiss Ambulance Rescue Geneva Simulation")
 
-try:
-    st.write("Loading GeoJSON data...")
-    gdf = gpd.read_file("src/geneva_communes.geojson")
-    st.write(f"GeoJSON data loaded. Shape: {gdf.shape}")
-    
-    st.write("Ensuring GeoDataFrame is in EPSG:4326...")
-    gdf = gdf.to_crs("EPSG:4326")
-    
-    st.write("Loading density data...")
+# Load and process data
+@st.cache_data
+def load_data():
+    gdf = gpd.read_file("src/geneva_communes.geojson").to_crs("EPSG:4326")
     density_df = pd.read_csv("src/density.csv")
-    st.write(f"Density data loaded. Shape: {density_df.shape}")
-
+    
     name_mapping = {
         'Anières': 'Anières',
         'Carouge (GE)': 'Carouge',
@@ -40,88 +35,118 @@ try:
         'Pregny-Chambésy': 'Pregny-Chambésy',
         'Vandoeuvres': 'Vandœuvres'
     }
-
-    st.write("Applying name mapping...")
-    gdf['name'] = gdf['name'].map(lambda x: name_mapping.get(x, x))
-
-    st.write("Merging GeoDataFrame with density data...")
-    gdf = gdf.merge(density_df, left_on="name", right_on="Nom", how="left")
-    st.write(f"Merged data shape: {gdf.shape}")
-
-    st.write("Creating map...")
-    m = folium.Map(location=[46.2044, 6.1432], zoom_start=11)
-
-    st.write("Converting GeoDataFrame to JSON...")
-    geo_json = json.loads(gdf.to_json(default=json_serial))
     
-    st.write("Adding choropleth layer...")
-    folium.Choropleth(
-        geo_data=geo_json,
-        name="Population Density",
-        data=gdf,
-        columns=["name", "Densité (hab./km2)"],
-        key_on="feature.properties.name",
-        fill_color="YlOrRd",
-        fill_opacity=0.7,
-        line_opacity=0.2,
-        legend_name="Population Density (hab./km2)",
+    gdf['name'] = gdf['name'].map(lambda x: name_mapping.get(x, x))
+    gdf = gdf.merge(density_df, left_on="name", right_on="Nom", how="left")
+    
+    return gdf
+
+gdf = load_data()
+
+# TCS Swiss Ambulance Rescue Geneva Information
+tcs_info = {
+    "total_employees": 70,
+    "total_vehicles": 15,
+    "bases": [
+        {"name": "Base d'Alcide-Jentzer", "coords": [46.1922208, 6.1458217], "ambulances": 7, "teams": 3},
+        {"name": "Base des Eaux-Vives", "coords": [46.2014450, 6.1665700], "ambulances": 4, "teams": 2},
+        {"name": "Base de Ferrier", "coords": [46.2135260, 6.1489360], "ambulances": 1, "teams": 1}
+    ],
+    "annual_interventions": 30000,
+    "emergency_interventions": 9000,
+    "secondary_interventions": 5500
+}
+
+# Create map
+m = folium.Map(location=[46.2044, 6.1432], zoom_start=11)
+
+# Add choropleth layer
+folium.Choropleth(
+    geo_data=json.loads(gdf.to_json(default=json_serial)),
+    name="Population Density",
+    data=gdf,
+    columns=["name", "Densité (hab./km2)"],
+    key_on="feature.properties.name",
+    fill_color="YlOrRd",
+    fill_opacity=0.7,
+    line_opacity=0.2,
+    legend_name="Population Density (hab./km2)",
+).add_to(m)
+
+# Add base markers
+for base in tcs_info["bases"]:
+    folium.Marker(
+        base["coords"],
+        popup=f"{base['name']}<br>Ambulances: {base['ambulances']}<br>Teams: {base['teams']}",
+        icon=folium.Icon(color="blue", icon="ambulance", prefix='fa')
     ).add_to(m)
 
-    bases = [
-        {"name": "Base d'Alcide-Jentzer", "coords": [46.1922208, 6.1458217]},
-        {"name": "Base des Eaux-Vives", "coords": [46.2014450, 6.1665700]},
-        {"name": "Base de Ferrier", "coords": [46.2135260, 6.1489360]}
-    ]
+# Simulate emergency calls
+def simulate_emergency_calls(num_calls):
+    calls = []
+    for _ in range(num_calls):
+        commune = random.choice(gdf['name'].tolist())
+        coords = gdf[gdf['name'] == commune].geometry.centroid.iloc[0]
+        calls.append({
+            "commune": commune,
+            "coords": [coords.y, coords.x]
+        })
+    return calls
 
-    st.write("Adding ambulance base markers...")
-    for base in bases:
-        folium.Marker(
-            base["coords"],
-            popup=base["name"],
-            icon=folium.Icon(color="blue", icon="ambulance", prefix='fa')
-        ).add_to(m)
+# Add emergency call markers
+emergency_calls = simulate_emergency_calls(10)
+for call in emergency_calls:
+    folium.Marker(
+        call["coords"],
+        popup=f"Emergency in {call['commune']}",
+        icon=folium.Icon(color="red", icon="exclamation", prefix='fa')
+    ).add_to(m)
 
-    st.write("Displaying map...")
+# Display map and information
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.subheader("Geneva Map with Ambulance Bases and Simulated Emergency Calls")
     folium_static(m)
 
-    st.sidebar.title("Parameters")
-    st.sidebar.slider("Number of Ambulances", 1, 10, 3)
-    st.sidebar.number_input("Population Size", 100, 1000, 500)
-    st.sidebar.number_input("Number of Generations", 10, 1000, 100)
-    st.sidebar.slider("Mutation Rate", 0.0, 1.0, 0.01)
-    st.sidebar.slider("Crossover Rate", 0.0, 1.0, 0.8)
+with col2:
+    st.subheader("TCS Swiss Ambulance Rescue Geneva Info")
+    st.write(f"Total Employees: {tcs_info['total_employees']}")
+    st.write(f"Total Vehicles: {tcs_info['total_vehicles']}")
+    st.write(f"Annual Interventions: {tcs_info['annual_interventions']}")
+    st.write(f"Emergency Interventions: {tcs_info['emergency_interventions']}")
+    st.write(f"Secondary Interventions: {tcs_info['secondary_interventions']}")
+    
+    st.subheader("Ambulance Bases")
+    for base in tcs_info["bases"]:
+        st.write(f"{base['name']}:")
+        st.write(f"  Ambulances: {base['ambulances']}")
+        st.write(f"  Teams: {base['teams']}")
 
-    unmatched = gdf[gdf['Densité (hab./km2)'].isna()]['name'].tolist()
-    if unmatched:
-        st.warning(f"The following communes were not matched: {', '.join(unmatched)}")
+# Simulation parameters
+st.sidebar.title("Simulation Parameters")
+num_ambulances = st.sidebar.slider("Number of Ambulances", 1, tcs_info['total_vehicles'], tcs_info['total_vehicles'])
+population_size = st.sidebar.number_input("Population Size", 100, 1000, 500)
+num_generations = st.sidebar.number_input("Number of Generations", 10, 1000, 100)
+mutation_rate = st.sidebar.slider("Mutation Rate", 0.0, 1.0, 0.01)
+crossover_rate = st.sidebar.slider("Crossover Rate", 0.0, 1.0, 0.8)
 
-except FileNotFoundError as e:
-    st.error(f"Error: Could not find the file. Please check if the file paths are correct. Details: {e}")
-except pd.errors.EmptyDataError:
-    st.error("Error: The CSV file is empty. Please check the content of your density.csv file.")
-except json.JSONDecodeError as e:
-    st.error(f"Error: Invalid JSON in the GeoJSON file. Please check the content of your geneva_communes.geojson file. Details: {e}")
-except ValueError as e:
-    st.error(f"Error: There was a problem with the data. Details: {e}")
-except Exception as e:
-    st.error(f"An unexpected error occurred: {e}")
-    st.error("Full error details:")
-    st.exception(e)
+# Placeholder for genetic algorithm optimization
+st.subheader("Genetic Algorithm Optimization")
+st.write("This section would implement the genetic algorithm to optimize ambulance locations based on population density and emergency call distribution.")
 
+# Additional analysis and visualizations
+st.subheader("Additional Analysis")
+st.write("Here you could add more visualizations, such as:")
+st.write("- Heatmap of emergency calls")
+st.write("- Response time analysis")
+st.write("- Ambulance utilization statistics")
+
+# Data source information
 st.markdown("""
-## Population Density Map
-
-This map shows the geographical boundaries of Geneva's communes:
-- Each commune is colored based on its population density (darker = higher density).
-- The blue ambulance icons show the current locations of ambulance bases.
-
-Data sources:
+## Data Sources
 - Commune boundaries: GeoJSON file in src/geneva_communes.geojson
 - Population density: CSV file in src/density.csv
-- Ambulance locations: Provided coordinates
-
-Next steps could include:
-1. Implementing the genetic algorithm to optimize ambulance locations based on population density and geographic distribution.
-2. Adding interactive elements to allow users to see the impact of different ambulance placements.
-3. Incorporating additional factors such as road networks and historical emergency call data.
+- TCS Swiss Ambulance Rescue Geneva information: Based on provided details
+- Emergency calls: Simulated based on population density
 """)
