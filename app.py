@@ -3,92 +3,96 @@ import folium
 from streamlit_folium import folium_static
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Polygon
+import json
 
-# Load communes data
-communes_df = pd.read_csv("src/geneve_communes.csv", sep=";")
-
-# Load density data
-density_df = pd.read_csv("src/density.csv")
-
-# Create geometry from SHAPE.AREA and SHAPE.LEN (this is an approximation)
-communes_df['geometry'] = communes_df.apply(lambda row: Polygon([(0, 0), (row['SHAPE.LEN'], 0), 
-                                                                 (row['SHAPE.LEN'], row['SHAPE.AREA']/row['SHAPE.LEN']), 
-                                                                 (0, row['SHAPE.AREA']/row['SHAPE.LEN'])]), axis=1)
-
-# Create GeoDataFrame
-gdf = gpd.GeoDataFrame(communes_df, geometry='geometry')
-
-# Merge with density data
-gdf = gdf.merge(density_df, left_on="NO_COM_FEDERAL", right_on="N° OFS1", how="left")
-
-# Set page title
 st.set_page_config(page_title="Geneva Ambulance Locations and Population Density")
-
-# Title
 st.title("Geneva Ambulance Locations and Population Density")
 
-# Create a map centered on Geneva
-m = folium.Map(location=[46.2044, 6.1432], zoom_start=11)
+try:
+    # Load GeoJSON data
+    gdf = gpd.read_file("src/geneva_communes.geojson")
+    
+    # Check if CRS is set, if not, set it to EPSG:4326 (WGS84)
+    if gdf.crs is None:
+        gdf = gdf.set_crs("EPSG:4326")
+    
+    # Ensure the GeoDataFrame is in EPSG:4326
+    gdf = gdf.to_crs("EPSG:4326")
 
-# Add choropleth layer
-folium.Choropleth(
-    geo_data=gdf,
-    name="Population Density",
-    data=gdf,
-    columns=["COMMUNE", "Densité (hab./km2)"],
-    key_on="feature.properties.COMMUNE",
-    fill_color="YlOrRd",
-    fill_opacity=0.7,
-    line_opacity=0.2,
-    legend_name="Population Density (hab./km2)",
-).add_to(m)
+    # Load density data
+    density_df = pd.read_csv("src/density.csv")
 
-# Ambulance base locations
-bases = [
-    {"name": "Base d'Alcide-Jentzer", "coords": [46.1922208, 6.1458217]},
-    {"name": "Base des Eaux-Vives", "coords": [46.2014450, 6.1665700]},
-    {"name": "Base de Ferrier", "coords": [46.2135260, 6.1489360]}
-]
+    # Merge with density data
+    gdf = gdf.merge(density_df, left_on="name", right_on="Nom", how="left")
 
-# Add markers for each ambulance base
-for base in bases:
-    folium.Marker(
-        base["coords"],
-        popup=base["name"],
-        icon=folium.Icon(color="red", icon="ambulance", prefix='fa')
+    # Create a map centered on Geneva
+    m = folium.Map(location=[46.2044, 6.1432], zoom_start=11)
+
+    # Add choropleth layer
+    folium.Choropleth(
+        geo_data=gdf.__geo_interface__,
+        name="Population Density",
+        data=gdf,
+        columns=["name", "Densité (hab./km2)"],
+        key_on="feature.properties.name",
+        fill_color="YlOrRd",
+        fill_opacity=0.7,
+        line_opacity=0.2,
+        legend_name="Population Density (hab./km2)",
     ).add_to(m)
 
-# Add layer control
-folium.LayerControl().add_to(m)
+    # Ambulance base locations
+    bases = [
+        {"name": "Base d'Alcide-Jentzer", "coords": [46.1922208, 6.1458217]},
+        {"name": "Base des Eaux-Vives", "coords": [46.2014450, 6.1665700]},
+        {"name": "Base de Ferrier", "coords": [46.2135260, 6.1489360]}
+    ]
 
-# Display the map
-folium_static(m)
+    # Add markers for each ambulance base
+    for base in bases:
+        folium.Marker(
+            base["coords"],
+            popup=base["name"],
+            icon=folium.Icon(color="blue", icon="ambulance", prefix='fa')
+        ).add_to(m)
 
-# Sidebar for future parameter controls
-st.sidebar.title("Parameters")
-st.sidebar.slider("Number of Ambulances", 1, 10, 3)
-st.sidebar.number_input("Population Size", 100, 1000, 500)
-st.sidebar.number_input("Number of Generations", 10, 1000, 100)
-st.sidebar.slider("Mutation Rate", 0.0, 1.0, 0.01)
-st.sidebar.slider("Crossover Rate", 0.0, 1.0, 0.8)
+    # Display the map
+    folium_static(m)
+
+    # Sidebar for future parameter controls
+    st.sidebar.title("Parameters")
+    st.sidebar.slider("Number of Ambulances", 1, 10, 3)
+    st.sidebar.number_input("Population Size", 100, 1000, 500)
+    st.sidebar.number_input("Number of Generations", 10, 1000, 100)
+    st.sidebar.slider("Mutation Rate", 0.0, 1.0, 0.01)
+    st.sidebar.slider("Crossover Rate", 0.0, 1.0, 0.8)
+
+except FileNotFoundError as e:
+    st.error(f"Error: Could not find the file. Please check if the file paths are correct. Details: {e}")
+except pd.errors.EmptyDataError:
+    st.error("Error: The CSV file is empty. Please check the content of your density.csv file.")
+except json.JSONDecodeError:
+    st.error("Error: Invalid JSON in the GeoJSON file. Please check the content of your geneva_communes.geojson file.")
+except ValueError as e:
+    st.error(f"Error: There was a problem with the data. Details: {e}")
+except Exception as e:
+    st.error(f"An unexpected error occurred: {e}")
 
 # Explanation of the data
 st.markdown("""
 ## Population Density Map
 
-This map shows the population density of Geneva's communes, with darker colors indicating higher density areas. 
-The red ambulance icons show the current locations of ambulance bases.
+This map shows the geographical boundaries of Geneva's communes:
+- Each commune is colored based on its population density (darker = higher density).
+- The blue ambulance icons show the current locations of ambulance bases.
 
 Data sources:
-- Commune boundaries: CSV file in src/geneve_communes.csv
+- Commune boundaries: GeoJSON file in src/geneva_communes.geojson
 - Population density: CSV file in src/density.csv
 - Ambulance locations: Provided coordinates
 
-Note: The commune boundaries are approximated based on area and length data. For more accurate representations, a proper GeoJSON file would be needed.
-
 Next steps could include:
-1. Implementing the genetic algorithm to optimize ambulance locations based on population density.
-2. Adding more interactive elements to allow users to see the impact of different ambulance placements.
+1. Implementing the genetic algorithm to optimize ambulance locations based on population density and geographic distribution.
+2. Adding interactive elements to allow users to see the impact of different ambulance placements.
 3. Incorporating additional factors such as road networks and historical emergency call data.
 """)
