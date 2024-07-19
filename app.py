@@ -4,6 +4,14 @@ from streamlit_folium import folium_static
 import geopandas as gpd
 import pandas as pd
 import json
+from datetime import datetime
+
+# Custom JSON encoder to handle Timestamp objects
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (datetime, pd.Timestamp)):
+            return obj.isoformat()
+        return super(DateTimeEncoder, self).default(obj)
 
 st.set_page_config(page_title="Geneva Ambulance Locations and Population Density")
 st.title("Geneva Ambulance Locations and Population Density")
@@ -12,15 +20,27 @@ try:
     # Load GeoJSON data
     gdf = gpd.read_file("src/geneva_communes.geojson")
     
-    # Check if CRS is set, if not, set it to EPSG:4326 (WGS84)
-    if gdf.crs is None:
-        gdf = gdf.set_crs("EPSG:4326")
-    
     # Ensure the GeoDataFrame is in EPSG:4326
     gdf = gdf.to_crs("EPSG:4326")
 
     # Load density data
     density_df = pd.read_csv("src/density.csv")
+
+    # Create a mapping dictionary for commune names
+    name_mapping = {
+        'Anières': 'Anières',
+        'Carouge (GE)': 'Carouge',
+        'Chène-Bourg': 'Chêne-Bourg',
+        'Corsier (GE)': 'Corsier',
+        'Céligny': 'Céligny',
+        'Genève': 'Genève',
+        'Le Grand-Saconnex': 'Le Grand-Saconnex',
+        'Pregny-Chambésy': 'Pregny-Chambésy',
+        'Vandoeuvres': 'Vandœuvres'
+    }
+
+    # Apply the mapping to the GeoDataFrame
+    gdf['name'] = gdf['name'].map(lambda x: name_mapping.get(x, x))
 
     # Merge with density data
     gdf = gdf.merge(density_df, left_on="name", right_on="Nom", how="left")
@@ -30,7 +50,7 @@ try:
 
     # Add choropleth layer
     folium.Choropleth(
-        geo_data=gdf.__geo_interface__,
+        geo_data=json.loads(gdf.to_json(), cls=DateTimeEncoder),
         name="Population Density",
         data=gdf,
         columns=["name", "Densité (hab./km2)"],
@@ -66,6 +86,11 @@ try:
     st.sidebar.number_input("Number of Generations", 10, 1000, 100)
     st.sidebar.slider("Mutation Rate", 0.0, 1.0, 0.01)
     st.sidebar.slider("Crossover Rate", 0.0, 1.0, 0.8)
+
+    # Print out any communes that didn't get matched
+    unmatched = gdf[gdf['Densité (hab./km2)'].isna()]['name'].tolist()
+    if unmatched:
+        st.warning(f"The following communes were not matched: {', '.join(unmatched)}")
 
 except FileNotFoundError as e:
     st.error(f"Error: Could not find the file. Please check if the file paths are correct. Details: {e}")
